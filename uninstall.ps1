@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 #  git看门狗 (github-watchdog) — uninstaller
 #  Removes autostart, stops the proxy, clears the PAC + proxy env vars.
 #  Usage:  powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1

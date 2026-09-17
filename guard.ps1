@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 #  git看门狗 (github-watchdog) — deep guard
 #  - verifies the *whole proxy chain* (not just "is mitmdump alive")
 #  - when a mapped host stops responding, fails over to the next candidate IP

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 #  git看门狗 (github-watchdog) — self-check
 #  Usage:  powershell -NoProfile -ExecutionPolicy Bypass -File selfcheck.ps1
 #  Exit 0 = all critical checks passed, 1 = one or more failed.

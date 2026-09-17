@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 #  git看门狗 (github-watchdog) — watchdog
 #  - keeps mitmdump alive: process exists AND 127.0.0.1:8180 accepts TCP
 #  - 30s startup grace period so a booting mitmdump is never mistaken for a zombie
