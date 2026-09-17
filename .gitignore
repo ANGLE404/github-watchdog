@@ -1,4 +1,4 @@
-# build / binary (install.ps1 downloads or locates mitmdump)
+﻿# build / binary (install.ps1 downloads or locates mitmdump)
 bin/*.exe
 bin/*.dll
 !bin/.gitkeep
@@ -12,3 +12,6 @@ gh-login-state.json
 # mitmproxy certificate material
 *.cer
 *.pem
+dynamic-ips.json
+meta-cache.json
+update-ips.log
