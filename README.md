@@ -1,10 +1,10 @@
 # git看门狗 (github-watchdog)
 
-> 让 GitHub 在受限网络里「开机即用、断了自己爬起来」的本地加速代理。
+> 让 GitHub 访问「开机即用、断了自己爬起来」的本地代理与自愈工具。
 
 `github-watchdog` 基于 [feng2208/github-hosts](https://github.com/feng2208/github-hosts) 的
-mitmproxy 域名前置思路，补上了它在真实网络里最缺的三件事：**浏览器肯用代理**、
-**IP 被封了会自己换**、**被谁清掉代理了会自己修**。
+mitmproxy 方案，补上了它在实际使用中最缺的三件事：**浏览器肯用代理**、
+**上游地址不可达时会自己换**、**代理设置被清掉时会自己修**。
 
 ---
 
@@ -13,8 +13,8 @@ mitmproxy 域名前置思路，补上了它在真实网络里最缺的三件事�
 | 能力 | 说明 |
 |---|---|
 | 类 PAC 白名单代理 | 只把 GitHub 相关域名（github.com / api / codeload / gist / githubusercontent / githubassets / github.io）走本地代理，其它流量直连 |
-| 抗 DNS 污染 | 所有上游地址写死真实 IP，不依赖本机 DNS |
-| 抗 SNI 阻断 | 对 github.com / api / codeload / gist 采用**不发 SNI**；对 CDN 采用**域前置** |
+| 固定上游地址 | 所有上游地址写死为 GitHub 官方 IP，不受本机 DNS 解析结果影响 |
+| TLS 兼容处理 | 针对部分网络下 TLS 握手易被干扰的情况，按域名做 SNI 省略 / 替换，提高握手成功率 |
 | 浏览器 PAC 强制刷新 | Chromium 对「值没变」的系统代理不会重读 —— 看门狗会周期性 nudge 强制它重读 |
 | 开机自启（三层） | Run 键 + 启动文件夹 + 计划任务登录触发，命名互斥体保证只跑一个 |
 | 看门狗自愈 | 进程挂了 / 端口不通 → 自动重启 |
@@ -29,20 +29,20 @@ mitmproxy 域名前置思路，补上了它在真实网络里最缺的三件事�
 ```
 浏览器 --PAC(仅GitHub域名)--> 127.0.0.1:8180 (mitmdump + github-hosts.py)
                                    |
-                                   | 按 hosts 规则改写 SNI / 目标 IP
+                                   | 按配置改写 SNI / 目标 IP
                                    v
-                           GitHub 真实 IP（写死，绕过 DNS 污染与 SNI 阻断）
+                           GitHub 官方 IP（写死，不依赖本机 DNS 与默认 SNI）
 ```
 
 关键设计点：
 
 1. **写死 IP，不查 DNS**：`github.com / api / codeload / gist` 分别指向 `140.82.112~116.x`，
    `*.githubusercontent.com / githubassets` 指向 `185.199.10x.154`。
-2. **不发 SNI**：GFW 靠 TLS 明文里的 SNI 做阻断，`sni: _github.com` 表示握手时不发送 SNI，
-   服务端只认 HTTP 的 `Host` 头，路由依然正确。
-3. **域前置**：当某 IP 的默认证书与目标域名不匹配时（例如 `185.199.111.154` 的证书是
-   `*.githubassets.com`），就把 SNI 设成该证书真实包含的名字，`Host` 保持不变 ——
-   CDN 按 Host 返回正确内容，证书校验也能通过。
+2. **SNI 省略**：部分网络中明文 SNI 会导致连接被重置；`sni: _github.com` 表示握手时不
+   发送 SNI，服务端只认 HTTP 的 `Host` 头，路由依然正确。
+3. **SNI 对齐**：当某 IP 的默认证书与目标域名不匹配时（例如 `185.199.111.154` 的证书是
+   `*.githubassets.com`），把 SNI 设成该证书真实包含的名字，`Host` 保持不变 ——
+   CDN 按 Host 返回正确内容，TLS 校验也能通过。
 
 ---
 
@@ -127,13 +127,13 @@ gh-login.bat
 
 | 域名 | SNI | 地址 | 用途 |
 |---|---|---|---|
-| github.com | `_github.com`（不发 SNI） | 140.82.116.3:443 | 主站 |
+| github.com | `_github.com`（省略 SNI） | 140.82.116.3:443 | 主站 |
 | *.github.com | `_github.com` | 140.82.116.3:443 | 子域兜底（uploads 等） |
 | api.github.com | `_api.github.com` | 140.82.112.6:443 | REST API |
 | codeload.github.com | `_codeload.github.com` | 140.82.112.9:443 | 仓库打包 |
 | gist.github.com | `_github.com` | 140.82.112.4:443 | Gist |
 | github.githubassets.com | `_github.githubassets.com` | 185.199.111.154:443 | 页面静态资源 |
-| *.githubusercontent.com | `github.githubassets.com`（域前置） | 185.199.111.154:443 | raw / 头像 / Release 附件 |
+| *.githubusercontent.com | `github.githubassets.com`（SNI 对齐） | 185.199.111.154:443 | raw / 头像 / Release 附件 |
 | *.github.io | `_github.io` | 185.199.111.153:443 | GitHub Pages |
 
 未映射的域名默认 TCP 直通（不影响其它网站）。
@@ -150,8 +150,8 @@ Chromium 只在系统代理「字符串发生变化」时才重读。看门狗�
 记得用「改变量 + 通知」，只调 `InternetSetOption` 是不够的。
 
 **Q：`raw.githubusercontent.com` / 头像打不开？**
-GitHub 自有 CDN 段 `185.199.108~111.**.133`、`.153` 会整段被封。本项目的做法是用
-`185.199.111.154` + 域前置 SNI `github.githubassets.com`，`Host` 保持原样。
+GitHub 自有 CDN 段 `185.199.108~111.**.133`、`.153` 在部分网络下会整段不可达。本项目
+的做法是用 `185.199.111.154` + SNI `github.githubassets.com`，`Host` 保持原样。
 
 **Q：想确认 PAC 在系统层是否生效（不走浏览器）？**
 ```powershell
@@ -176,21 +176,21 @@ $p.GetProxy([Uri]'https://example.com/')  # 应为直连
 ## 已知限制
 
 - 大文件（codeload 打包、Release 附件）速度受链路影响，可能较慢。
-- 上游 IP 会不定期被封；`guard.ps1` 能自动切换候选 IP，但候选池也需要偶尔维护。
+- 上游 IP 会不定期变得不可达；`guard.ps1` 能自动切换候选 IP，但候选池也需要偶尔维护。
 - 仅面向 Windows。
 
 ---
 
 ## 免责声明
 
-本项目用于在受限网络环境下访问 GitHub，仅做本地流量代理与可用性自愈。
+本项目用于提升 GitHub 访问的稳定性与可用性，仅做本地流量代理与可用性自愈。
 请遵守你所在地区的法律法规，自行评估并承担使用风险。
 
 ---
 
 ## 鸣谢
 
-- [feng2208/github-hosts](https://github.com/feng2208/github-hosts) —— mitmproxy 域名前置思路与插件
+- [feng2208/github-hosts](https://github.com/feng2208/github-hosts) —— mitmproxy 代理方案与插件
 - [mitmproxy](https://mitmproxy.org) —— 代理内核
 
 ## License
