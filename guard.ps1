@@ -14,6 +14,7 @@ $BAK    = Join-Path $BASE 'src\config.yaml.bak'
 $LAUNCH = Join-Path $BASE 'mitmdump-run.cmd'
 $LOG    = Join-Path $BASE 'guard.log'
 $PAUSED = Join-Path $BASE '.paused'
+$DYN    = Join-Path $BASE 'dynamic-ips.json'   # produced by update-ips.ps1 (Meta API)
 $PROXY  = 'http://127.0.0.1:8180'
 $UTF8   = New-Object System.Text.UTF8Encoding($false)   # config.yaml has no BOM, LF endings
 
@@ -81,6 +82,47 @@ function Set-MappingAddress {
     return $null
 }
 
+$UPD = Join-Path $BASE 'update-ips.ps1'
+
+function Get-DynamicCandidates([string]$name) {
+    # extra failover pool discovered from the official Meta API (update-ips.ps1)
+    if (-not (Test-Path $DYN)) { return @() }
+    try {
+        $j = Get-Content $DYN -Raw | ConvertFrom-Json
+        $pool = $j.pools.$name
+        if ($pool) { return @($pool) }
+    } catch { }
+    return @()
+}
+
+function Ensure-UpdateTask {
+    # self-register the daily Meta-API IP refresh task (so install.ps1 need not know)
+    if (-not (Test-Path $UPD)) { return }
+    $null = schtasks /Query /TN GithubHostsUpdateIPs 2>&1
+    if ($LASTEXITCODE -eq 0) { return }
+    try {
+        $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $UPD + '"')
+        $t1 = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        $t2 = New-ScheduledTaskTrigger -Daily -At 3am
+        $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable
+        Register-ScheduledTask -TaskName 'GithubHostsUpdateIPs' -Action $a -Trigger @($t1, $t2) -Settings $s -Force | Out-Null
+        Write-GLog 'registered daily GithubHostsUpdateIPs task'
+    } catch { Write-GLog ('failed to register update task: ' + $_.Exception.Message) }
+}
+
+function Refresh-DynamicIpsIfStale {
+    # keep dynamic-ips.json fresh (<=24h) using the official Meta API
+    if (-not (Test-Path $UPD)) { return }
+    if (Test-Path $DYN) {
+        try {
+            $j = Get-Content $DYN -Raw | ConvertFrom-Json
+            if ($j.updated) { $age = (Get-Date) - [datetime]$j.updated; if ($age.TotalHours -lt 24) { return } }
+        } catch { }
+    }
+    Write-GLog 'dynamic-ips stale -> refreshing from Meta API'
+    try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $UPD 2>&1 | Out-Null } catch { Write-GLog ('update-ips failed: ' + $_.Exception.Message) }
+}
+
 $targets = @(
     [pscustomobject]@{ Name = 'github.com';  Host = 'github.com';               Url = 'https://github.com/robots.txt';                           Ips = @('140.82.116.3', '140.82.112.3', '140.82.113.3', '140.82.114.3') },
     [pscustomobject]@{ Name = 'api';         Host = 'api.github.com';           Url = 'https://api.github.com/rate_limit';                       Ips = @('140.82.112.6', '140.82.113.6', '140.82.114.6', '140.82.116.6') },
@@ -91,6 +133,10 @@ $targets = @(
 )
 
 if (Test-Path $PAUSED) { Write-GLog 'paused (.paused present) - nothing to do'; exit 0 }
+
+# keep the Meta-API discovery running even if install.ps1 did not register it
+Ensure-UpdateTask
+Refresh-DynamicIpsIfStale
 
 if (-not (Test-ProxyPort)) {
     Write-GLog 'proxy port 8180 down -> restarting mitmdump'
@@ -108,7 +154,9 @@ foreach ($t in $targets) {
     Copy-Item $CONFIG $BAK -Force -ErrorAction SilentlyContinue
     $fixed = $false
 
-    foreach ($ip in $t.Ips) {
+    $candidates = @($t.Ips) + @(Get-DynamicCandidates $t.Name)
+    $candidates = @($candidates | Where-Object { $_ } | Select-Object -Unique)
+    foreach ($ip in $candidates) {
         $new = Set-MappingAddress -Text $orig -HostName $t.Host -Address ($ip + ':443')
         if ($null -eq $new) { Write-GLog "  cannot locate mapping for $($t.Host)"; break }
         if ($new -eq $orig) { continue }
