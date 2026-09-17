@@ -1,30 +1,24 @@
-﻿# =============================================================================
-#  git看门狗 (github-watchdog) — deep guard
-#  - verifies the *whole proxy chain* (not just "is mitmdump alive")
-#  - when a mapped host stops responding, fails over to the next candidate IP
-#    by rewriting src\config.yaml, restarting mitmdump and re-verifying
-#  - only keeps a change that is proven to work; otherwise restores the backup
-#  - honours the ".paused" sentinel
-#  Run:  powershell -NoProfile -ExecutionPolicy Bypass -File guard.ps1
+# =============================================================================
+#  git看门狗 (github-watchdog) - installer
+#  Usage (normal user, no admin needed):
+#     powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 # =============================================================================
 $ErrorActionPreference = 'Continue'
-$BASE   = $PSScriptRoot
-$CONFIG = Join-Path $BASE 'src\config.yaml'
-$BAK    = Join-Path $BASE 'src\config.yaml.bak'
+$BASE = $PSScriptRoot
 $LAUNCH = Join-Path $BASE 'mitmdump-run.cmd'
-$LOG    = Join-Path $BASE 'guard.log'
-$PAUSED = Join-Path $BASE '.paused'
-$PROXY  = 'http://127.0.0.1:8180'
-$UTF8   = New-Object System.Text.UTF8Encoding($false)   # config.yaml has no BOM, LF endings
+$VBS = Join-Path $BASE 'watchdog-launcher.vbs'
+$GUARD = Join-Path $BASE 'guard.ps1'
+$SELF = Join-Path $BASE 'selfcheck.ps1'
+$REGKEY = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+$PAC = 'http://127.0.0.1:8180/proxy.pac'
+$SU = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 
-function Write-GLog([string]$msg) {
-    try {
-        if ((Test-Path $LOG) -and ((Get-Item $LOG).Length -gt 2MB)) { Remove-Item $LOG -Force -ErrorAction SilentlyContinue }
-        Add-Content -Path $LOG -Value ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + '  ' + $msg) -Encoding UTF8
-    } catch { }
-}
+function Info($m) { Write-Host "[*] $m" -ForegroundColor Cyan }
+function Ok($m)   { Write-Host "[OK] $m" -ForegroundColor Green }
+function Warn($m) { Write-Host "[!] $m" -ForegroundColor Yellow }
+function Err($m)  { Write-Host "[X] $m" -ForegroundColor Red }
 
-function Test-ProxyPort {
+function Test-Port {
     try {
         $c = New-Object System.Net.Sockets.TcpClient
         $ar = $c.BeginConnect('127.0.0.1', 8180, $null, $null)
@@ -34,101 +28,97 @@ function Test-ProxyPort {
     } catch { return $false }
 }
 
-function Test-Chain([string]$url) {
-    try {
-        $code = (curl.exe -s -o NUL --max-time 25 -x $PROXY -w "%{http_code}" $url 2>$null) -join ''
-        return @('200', '301', '302') -contains $code
-    } catch { return $false }
+Write-Host ''
+Write-Host '==============================================' -ForegroundColor White
+Write-Host '   git-watchdog installer' -ForegroundColor White
+Write-Host '==============================================' -ForegroundColor White
+
+Info '1/6 locating mitmdump'
+$exe = Join-Path $BASE 'bin\mitmdump.exe'
+if (Test-Path $exe) {
+    Ok "using bundled $exe"
+} elseif (Get-Command mitmdump -ErrorAction SilentlyContinue) {
+    Ok 'mitmdump found on PATH'
+} else {
+    Warn 'mitmdump not found - trying: pip install mitmproxy'
+    $pip = Get-Command pip -ErrorAction SilentlyContinue
+    $py  = Get-Command python -ErrorAction SilentlyContinue
+    if ($pip) { & pip install --user mitmproxy }
+    elseif ($py) { & python -m pip install --user mitmproxy }
+    else { Err 'neither pip nor python is available.' }
+    if (Get-Command mitmdump -ErrorAction SilentlyContinue) { Ok 'mitmdump is now available' }
+    else {
+        Err 'Could not obtain mitmdump automatically.'
+        Write-Host '      a) pip install mitmproxy      (then re-run this installer)'
+        Write-Host "      b) put a mitmdump.exe at: $exe"
+        exit 1
+    }
 }
 
-function Restart-Mitm {
-    Get-Process mitmdump -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Info '2/6 preparing CA certificate'
+$cer = Join-Path $HOME '.mitmproxy\mitmproxy-ca-cert.cer'
+if (-not (Test-Path $cer)) {
+    Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $LAUNCH -WindowStyle Hidden
     $deadline = (Get-Date).AddSeconds(30)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 2
-        if (Test-ProxyPort) { return $true }
+    while ((Get-Date) -lt $deadline -and -not (Test-Path $cer)) { Start-Sleep -Seconds 1 }
+}
+if (Test-Path $cer) {
+    $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cer)
+    $tp = $x.Thumbprint
+    if (Test-Path "Cert:\CurrentUser\Root\$tp") {
+        Ok 'mitmproxy CA already trusted'
+    } else {
+        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
+        $store.Open('ReadWrite')
+        $store.Add($x)
+        $store.Close()
+        if (Test-Path "Cert:\CurrentUser\Root\$tp") { Ok 'mitmproxy CA installed into CurrentUser\Root' }
+        else { Warn 'could not verify CA install - browsers may warn; see README' }
     }
-    try { Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $LAUNCH -WindowStyle Hidden } catch { }
-    $deadline = (Get-Date).AddSeconds(30)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 2
-        if (Test-ProxyPort) { return $true }
-    }
-    return $false
+} else {
+    Warn 'CA cert not generated yet (mitmdump may still be starting)'
 }
 
-function Set-MappingAddress {
-    param([string]$Text, [string]$HostName, [string]$Address)
-    $nl = "`n"
-    $lines = $Text -split "`r?`n"
-    $pattern = '^\s*-\s*"?\s*' + [regex]::Escape($HostName) + '\s*"?\s*$'
-    $idx = -1
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match $pattern) {
-            $j = $i - 1
-            while ($j -ge 0 -and $lines[$j].Trim() -eq '') { $j-- }
-            if ($j -ge 0 -and $lines[$j].Trim() -eq '- hosts:') { $idx = $i; break }
-        }
-    }
-    if ($idx -lt 0) { return $null }
-    for ($k = $idx + 1; $k -lt $lines.Count; $k++) {
-        if ($lines[$k] -match '^\s*address:\s*') {
-            $indent = ($lines[$k] -replace 'address:.*$', '')
-            $lines[$k] = $indent + 'address: ' + $Address
-            return ($lines -join $nl)
-        }
-    }
-    return $null
+Info '3/6 setting PAC system proxy'
+New-ItemProperty -Path $REGKEY -Name 'AutoConfigURL' -Value $PAC -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $REGKEY -Name 'ProxyEnable' -Value 0 -PropertyType DWord -Force | Out-Null
+foreach ($v in @('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy')) {
+    [Environment]::SetEnvironmentVariable($v, 'http://127.0.0.1:8180', 'User')
 }
+Ok "AutoConfigURL = $PAC"
 
-$targets = @(
-    [pscustomobject]@{ Name = 'github.com';  Host = 'github.com';               Url = 'https://github.com/robots.txt';                           Ips = @('140.82.116.3', '140.82.112.3', '140.82.113.3', '140.82.114.3') },
-    [pscustomobject]@{ Name = 'api';         Host = 'api.github.com';           Url = 'https://api.github.com/rate_limit';                       Ips = @('140.82.112.6', '140.82.113.6', '140.82.114.6', '140.82.116.6') },
-    [pscustomobject]@{ Name = 'codeload';    Host = 'codeload.github.com';      Url = 'https://codeload.github.com/feng2208/github-hosts/zip/refs/heads/main'; Ips = @('140.82.112.9', '140.82.113.9', '140.82.114.9', '140.82.116.9') },
-    [pscustomobject]@{ Name = 'gist';        Host = 'gist.github.com';          Url = 'https://gist.github.com/';                                Ips = @('140.82.112.4', '140.82.113.4', '140.82.114.4', '140.82.116.4') },
-    [pscustomobject]@{ Name = 'assets';      Host = 'github.githubassets.com';  Url = 'https://github.githubassets.com/favicons/favicon.svg';    Ips = @('185.199.111.154', '185.199.110.154', '185.199.109.154', '185.199.108.154') },
-    [pscustomobject]@{ Name = 'usercontent'; Host = '*.githubusercontent.com'; Url = 'https://raw.githubusercontent.com/cli/cli/trunk/README.md'; Ips = @('185.199.111.154', '185.199.110.154', '185.199.109.154', '185.199.108.154') }
-)
+Info '4/6 registering autostart (3 layers)'
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'GithubHostsWatchdog' -Value ('wscript.exe "' + $VBS + '"') -PropertyType String -Force | Out-Null
+Ok 'Run key registered'
 
-if (Test-Path $PAUSED) { Write-GLog 'paused (.paused present) - nothing to do'; exit 0 }
+$suVbs = Join-Path $SU 'github-hosts-watchdog.vbs'
+$vbsText = "' git-watchdog autostart" + "`r`n" + 'Set shell = CreateObject("WScript.Shell")' + "`r`n" + 'shell.Run "wscript.exe ""' + $VBS + '""", 0, False' + "`r`n"
+Set-Content -Path $suVbs -Value $vbsText -Encoding ASCII
+Ok "Startup folder entry: $suVbs"
 
-if (-not (Test-ProxyPort)) {
-    Write-GLog 'proxy port 8180 down -> restarting mitmdump'
-    if (-not (Restart-Mitm)) { Write-GLog 'ERROR: could not bring mitmdump up'; exit 2 }
-    Start-Sleep -Seconds 1
-}
+try {
+    $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $VBS + '"')
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName 'GithubHostsWatchdogLogon' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+    Ok 'logon task registered'
+} catch { Warn "logon task not registered: $($_.Exception.Message)" }
 
-$failed = 0
-foreach ($t in $targets) {
-    if (Test-Chain $t.Url) { continue }
+Info '5/6 registering deep guard (every 15 min)'
+try {
+    $gAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $GUARD + '"')
+    $gSet = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -StartWhenAvailable
+    $gLogon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $gRep = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
+    Register-ScheduledTask -TaskName 'GithubHostsGuard' -Action $gAction -Trigger @($gLogon, $gRep) -Settings $gSet -Force | Out-Null
+    Ok 'guard task registered'
+} catch { Warn "guard task not registered: $($_.Exception.Message)" }
 
-    Write-GLog ("$($t.Name) FAILED via proxy -> trying IP failover")
-    $failed++
-    $orig = [IO.File]::ReadAllText($CONFIG)
-    Copy-Item $CONFIG $BAK -Force -ErrorAction SilentlyContinue
-    $fixed = $false
+Info '6/6 starting watchdog'
+Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $VBS + '"') -WindowStyle Hidden
+Start-Sleep -Seconds 8
+if (Test-Port) { Ok 'mitmdump is listening on 127.0.0.1:8180' } else { Warn 'port 8180 not listening yet' }
 
-    foreach ($ip in $t.Ips) {
-        $new = Set-MappingAddress -Text $orig -HostName $t.Host -Address ($ip + ':443')
-        if ($null -eq $new) { Write-GLog "  cannot locate mapping for $($t.Host)"; break }
-        if ($new -eq $orig) { continue }
-        [IO.File]::WriteAllText($CONFIG, $new, $UTF8)
-        [void](Restart-Mitm)
-        Start-Sleep -Seconds 2
-        if (Test-Chain $t.Url) {
-            Write-GLog "  $($t.Name) FIXED with new address $ip"
-            $fixed = $true
-            break
-        }
-        Write-GLog "  candidate $ip did not work"
-    }
-
-    if (-not $fixed) {
-        [IO.File]::WriteAllText($CONFIG, $orig, $UTF8)
-        [void](Restart-Mitm)
-        Write-GLog "  $($t.Name) no candidate worked - config restored to original"
-    }
-}
-
-Write-GLog ("guard done: targets tested = $($targets.Count), failures repaired attempted = $failed")
-exit 0
+Write-Host ''
+Write-Host 'Done. Running self-check...' -ForegroundColor White
+& powershell -NoProfile -ExecutionPolicy Bypass -File $SELF
