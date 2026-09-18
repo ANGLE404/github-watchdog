@@ -131,7 +131,8 @@ $targets = @(
     [pscustomobject]@{ Name = 'codeload';    Host = 'codeload.github.com';      Url = 'https://codeload.github.com/feng2208/github-hosts/zip/refs/heads/main'; Ips = @('140.82.112.9', '140.82.113.9', '140.82.114.9', '140.82.116.9') },
     [pscustomobject]@{ Name = 'gist';        Host = 'gist.github.com';          Url = 'https://gist.github.com/';                                Ips = @('140.82.112.4', '140.82.113.4', '140.82.114.4', '140.82.116.4') },
     [pscustomobject]@{ Name = 'assets';      Host = 'github.githubassets.com';  Url = 'https://github.githubassets.com/favicons/favicon.svg';    Ips = @('185.199.111.154', '185.199.110.154', '185.199.109.154', '185.199.108.154') },
-    [pscustomobject]@{ Name = 'usercontent'; Host = '*.githubusercontent.com'; Url = 'https://raw.githubusercontent.com/cli/cli/trunk/README.md'; Ips = @('185.199.111.154', '185.199.110.154', '185.199.109.154', '185.199.108.154') }
+    [pscustomobject]@{ Name = 'usercontent'; Host = '*.githubusercontent.com'; Url = 'https://raw.githubusercontent.com/cli/cli/trunk/README.md'; Ips = @('185.199.111.154', '185.199.110.154', '185.199.109.154', '185.199.108.154') },
+    [pscustomobject]@{ Name = 'github.io';   Host = '*.github.io';             Url = 'https://jquery.github.io/';                               Ips = @('185.199.111.153', '185.199.110.153', '185.199.109.153', '185.199.108.153') }
 )
 
 if (Test-Path $PAUSED) { Write-GLog 'paused (.paused present) - nothing to do'; exit 0 }

@@ -194,6 +194,7 @@ $services = [ordered]@{
     'gist'        = @{ ranges = (Get-WebRanges (@($meta.web) + @($meta.git))); last = @(4);        derive = $false }
     'assets'      = @{ ranges = @($meta.pages);                                last = @(154);      derive = $true }
     'usercontent' = @{ ranges = @($meta.pages);                                last = @(133, 154); derive = $true }
+    'github.io'   = @{ ranges = @($meta.pages);                                last = @(153);      derive = $false }
 }
 
 # which subscribed domains map to which service
@@ -204,6 +205,7 @@ $serviceDomains = @{
     'gist'        = @('gist.github.com')
     'assets'      = @('github.githubassets.com')
     'usercontent' = @('raw.githubusercontent.com', 'avatars.githubusercontent.com', 'objects.githubusercontent.com', 'camo.githubusercontent.com', 'gist.githubusercontent.com', 'user-images.githubusercontent.com', 'media.githubusercontent.com')
+    'github.io'   = @()
 }
 
 $seeds = Get-ThirdPartySeeds
