@@ -101,10 +101,12 @@ function Ensure-UpdateTask {
     $null = schtasks /Query /TN GithubHostsUpdateIPs 2>&1
     if ($LASTEXITCODE -eq 0) { return }
     try {
-        $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $UPD + '"')
+        $vbs = Join-Path $BASE 'update-ips-launcher.vbs'
+        if (Test-Path $vbs) { $a = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vbs + '"') }
+        else { $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $UPD + '"') }
         $t1 = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
         $t2 = New-ScheduledTaskTrigger -Daily -At 3am
-        $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable
+        $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable -Hidden
         Register-ScheduledTask -TaskName 'GithubHostsUpdateIPs' -Action $a -Trigger @($t1, $t2) -Settings $s -Force | Out-Null
         Write-GLog 'registered daily GithubHostsUpdateIPs task'
     } catch { Write-GLog ('failed to register update task: ' + $_.Exception.Message) }

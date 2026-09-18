@@ -1,5 +1,5 @@
-# =============================================================================
-#  git看门狗 (github-watchdog) - installer
+﻿# =============================================================================
+#  git鐪嬮棬鐙?(github-watchdog) - installer
 #  Usage (normal user, no admin needed):
 #     powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 # =============================================================================
@@ -106,13 +106,25 @@ try {
 
 Info '5/6 registering deep guard (every 15 min)'
 try {
-    $gAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $GUARD + '"')
-    $gSet = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -StartWhenAvailable
+    $gVbs = Join-Path $BASE 'guard-launcher.vbs'
+    if (Test-Path $gVbs) { $gAction = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $gVbs + '"') }
+    else { $gAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $GUARD + '"') }
+    $gSet = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15) -StartWhenAvailable -Hidden
     $gLogon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $gRep = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650)
     Register-ScheduledTask -TaskName 'GithubHostsGuard' -Action $gAction -Trigger @($gLogon, $gRep) -Settings $gSet -Force | Out-Null
     Ok 'guard task registered'
 } catch { Warn "guard task not registered: $($_.Exception.Message)" }
+try {
+    $uVbs = Join-Path $BASE 'update-ips-launcher.vbs'
+    if (Test-Path $uVbs) { $uAction = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $uVbs + '"') }
+    else { $uAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $BASE 'update-ips.ps1') + '"') }
+    $uSet = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable -Hidden
+    $uLogon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $uDaily = New-ScheduledTaskTrigger -Daily -At 3am
+    Register-ScheduledTask -TaskName 'GithubHostsUpdateIPs' -Action $uAction -Trigger @($uLogon, $uDaily) -Settings $uSet -Force | Out-Null
+    Ok 'update-ips task registered'
+} catch { Warn "update-ips task not registered: $($_.Exception.Message)" }
 
 Info '6/6 starting watchdog'
 Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + $VBS + '"') -WindowStyle Hidden

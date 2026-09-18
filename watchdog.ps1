@@ -85,11 +85,10 @@ function Test-ProxyPort {
 }
 
 function Start-Mitm {
-    # Launching mitmdump.exe *directly* via Start-Process makes it exit within a
-    # few seconds on some systems; going through the cmd launcher (which binds
-    # stdin to NUL) is reliable, so use that.
+    # Launch through a wscript (window style 0) wrapper: starting cmd.exe or
+    # powershell directly (Start-Process / Task Scheduler) can flash a console.
     try {
-        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $CMDLAUNCH -WindowStyle Hidden
+        Start-Process -FilePath 'wscript.exe' -ArgumentList ('"' + (Join-Path $BASE 'mitmdump-launcher.vbs') + '"') -WindowStyle Hidden
         return $true
     } catch {
         Write-Log ('ERROR starting mitmdump: ' + $_.Exception.Message)
