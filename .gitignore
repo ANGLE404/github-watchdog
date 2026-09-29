@@ -5,9 +5,14 @@ bin/*.dll
 
 # runtime state
 .paused
+.restarting
 *.log
 *.bak
+*.bak-*
+*.v1bak
 gh-login-state.json
+dynamic-ips.json
+meta-cache.json
 
 # mitmproxy certificate material
 *.cer

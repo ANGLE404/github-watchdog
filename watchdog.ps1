@@ -7,18 +7,38 @@
 #    nudges on startup and every 5 min, and notifies on every (re)application
 #  - honours the ".paused" sentinel (tear down + idle)
 #  - logs: watchdog.log (rotated at 2 MB), mitmdump.log
+#
+#  --- 2026-09-26 修复 --------------------------------------------------------
+#  故障：mitmdump 起不来时本脚本每 5 秒拉起一次。mitmdump.exe 是 PyInstaller
+#        onefile 包，每次启动都往 %TEMP% 解包约 45MB（_MEIxxxxxx），退出时若
+#        未正常清理就永久残留。8 天累积 10078 个目录 / 442.8 GB，吃满 C 盘。
+#        另外 guard.ps1 在换 IP 时会先杀掉 mitmdump，本脚本会抢跑启动，两者打架。
+#  对策：1) 尊重 guard 的 .restarting 锁，它重启期间不插手
+#        2) 重启冷却 COOLDOWN，两次重启之间有最小间隔
+#        3) 突发熔断 MAXBURST，窗口内重启超限则暂停 BREAKERWAIT
+#        4) 每次启动前清理 %TEMP% 下陈旧的 _MEI* 残留（保留最近 MEIKEEP 个）
 # =============================================================================
 $ErrorActionPreference = 'Continue'
 $BASE   = $PSScriptRoot
 $CMDLAUNCH = Join-Path $BASE 'mitmdump-run.cmd'
 $LOG    = Join-Path $BASE 'watchdog.log'
 $PAUSED = Join-Path $BASE '.paused'
+$LOCK   = Join-Path $BASE '.restarting'
+$SWEEP  = Join-Path $BASE 'sweep-mei.ps1'
 $REGKEY = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
 $PAC    = 'http://127.0.0.1:8180/proxy.pac'
 $PORT   = 8180
 $GRACE  = 30   # seconds a freshly started mitmdump is allowed to still be booting
 $TICK   = 5
 $NUDGE  = 300  # seconds between forced proxy re-reads (see Invoke-ProxyNudge)
+
+# ---- 节流参数（2026-09-26 修复）----------------------------------------------
+$COOLDOWN    = 120   # 两次重启之间的最小间隔（秒）
+$BURSTWIN    = 900   # 突发统计窗口（秒）
+$MAXBURST    = 3     # 窗口内最多允许的重启次数，超过则熔断
+$BREAKERWAIT = 900   # 熔断后暂停多久（秒）
+$MEIKEEP     = 2     # %TEMP% 下保留最近几个 _MEI 目录
+$LOCKMAX     = 90    # .restarting 锁的最长有效时间（秒）
 
 # ---- single-instance guard ---------------------------------------------------
 $mutex = New-Object System.Threading.Mutex($false, 'Local\GithubHostsWatchdog')
@@ -84,7 +104,36 @@ function Test-ProxyPort {
     } catch { return $false }
 }
 
+# ---- 2026-09-26 新增：清理 PyInstaller 陈旧解包残留 ---------------------------
+# 只保留最近 $MEIKEEP 个 _MEI 目录；正在使用的目录会因文件被占用而删除失败，
+# 由 catch 静默跳过，因此不会影响运行中的 mitmdump。
+function Clear-StaleMei {
+    try {
+        $tmp = [System.IO.Path]::GetTempPath()
+        $dirs = @(Get-ChildItem -LiteralPath $tmp -Directory -Filter '_MEI*' -ErrorAction SilentlyContinue |
+                  Sort-Object LastWriteTime -Descending)
+        if ($dirs.Count -le $MEIKEEP) { return }
+        $removed = 0
+        foreach ($d in @($dirs | Select-Object -Skip $MEIKEEP)) {
+            try { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction Stop; $removed++ } catch { }
+        }
+        if ($removed -gt 0) { Write-Log ("pruned $removed stale _MEI dirs") }
+    } catch { }
+}
+
+# ---- 2026-09-26 新增：判断 guard 是否正在重启 mitmdump -----------------------
+function Test-GuardRestarting {
+    try {
+        if (-not (Test-Path $LOCK)) { return $false }
+        $age = ((Get-Date) - (Get-Item $LOCK).LastWriteTime).TotalSeconds
+        if ($age -lt $LOCKMAX) { return $true }
+        Remove-Item -LiteralPath $LOCK -Force -ErrorAction SilentlyContinue
+        return $false
+    } catch { return $false }
+}
+
 function Start-Mitm {
+    Clear-StaleMei
     # Launch through a wscript (window style 0) wrapper: starting cmd.exe or
     # powershell directly (Start-Process / Task Scheduler) can flash a console.
     try {
@@ -121,10 +170,20 @@ function Set-ProxyOff {
 
 Write-Log ('=== watchdog started (pid ' + $PID + ') ===')
 $misses = 0
-$lastNudge = (Get-Date).AddSeconds(-$NUDGE)   # nudge once right after startup
+$lastNudge = (Get-Date).AddSeconds(-$NUDGE)      # nudge once right after startup
+$lastStart = (Get-Date).AddSeconds(-$COOLDOWN)   # allow the first start immediately
+$startHist = @()                                 # restart timestamps (burst window)
+$breakerUntil = (Get-Date).AddSeconds(-1)
 
 while ($true) {
     if (Test-Path $PAUSED) { Set-ProxyOff; Start-Sleep -Seconds 10; continue }
+
+    # guard 正在换 IP 重启 mitmdump —— 别插手，否则两个看门狗会互相打架
+    if (Test-GuardRestarting) {
+        Set-ProxyOn
+        Start-Sleep -Seconds $TICK
+        continue
+    }
 
     $procs   = @(Get-Process -Name 'mitmdump' -ErrorAction SilentlyContinue)
     $alive   = ($procs.Count -gt 0)
@@ -147,10 +206,29 @@ while ($true) {
                 $misses++
                 Write-Log ("mitmdump not running (consecutive misses = $misses) -> starting")
             }
-            if (Start-Mitm) {
-                Start-Sleep -Seconds 5
-                if (Test-ProxyPort) { Write-Log 'OK: mitmdump up, 127.0.0.1:8180 listening' }
-                else { Write-Log 'WARN: mitmdump started but port 8180 not listening yet' }
+
+            # ---- 2026-09-26 修复：重启节流 + 突发熔断 ----
+            $now = Get-Date
+            $startHist = @($startHist | Where-Object { ($now - $_).TotalSeconds -lt $BURSTWIN })
+
+            if ($now -lt $breakerUntil) {
+                Write-Log ('restart suppressed by circuit breaker ({0:N0}s left)' -f ($breakerUntil - $now).TotalSeconds)
+            }
+            elseif (($now - $lastStart).TotalSeconds -lt $COOLDOWN) {
+                Write-Log ('restart throttled, cooldown {0:N0}s left' -f ($COOLDOWN - ($now - $lastStart).TotalSeconds))
+            }
+            elseif ($startHist.Count -ge $MAXBURST) {
+                $breakerUntil = $now.AddSeconds($BREAKERWAIT)
+                Write-Log ("CIRCUIT BREAKER tripped: $($startHist.Count) restarts within ${BURSTWIN}s -> pausing ${BREAKERWAIT}s")
+            }
+            else {
+                if (Start-Mitm) {
+                    $lastStart = Get-Date
+                    $startHist += $lastStart
+                    Start-Sleep -Seconds 5
+                    if (Test-ProxyPort) { Write-Log 'OK: mitmdump up, 127.0.0.1:8180 listening' }
+                    else { Write-Log 'WARN: mitmdump started but port 8180 not listening yet' }
+                }
             }
         }
     } else {

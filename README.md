@@ -7,11 +7,10 @@ mitmproxy 方案，补上了它在实际使用中最缺的三件事：**浏览�
 **上游地址不可达时会自己换**、**代理设置被清掉时会自己修**。
 
 > **版本**
-> - `main` = **v1.1**：完整加速版。
+> - `main` = **v3.2**：完整加速版（v3.0 上游 IP 自动发现 + v3.1 无窗口后台任务 + v3.2 `*.github.io` 深度守卫），
+>   外加 **2026-09-26 加固**：PyInstaller 解包残留清扫、重启节流与熔断。
 > - 分支 [`v2.0A`](../../tree/v2.0A) = **纯连通性监测**：不改代理、不写死 IP、不动 SNI，
 >   只如实报告 GitHub 通 / 不通。
-> - 分支 `v3.0` = 在 v1.1 上增加 **上游 IP 自动发现/更新**（官方 Meta API + 第三方订阅作为候选种子），
->   仍保留本地测速与失败回滚。
 
 ---
 
@@ -26,9 +25,28 @@ mitmproxy 方案，补上了它在实际使用中最缺的三件事：**浏览�
 | 开机自启（三层） | Run 键 + 启动文件夹 + 计划任务登录触发，命名互斥体保证只跑一个 |
 | 看门狗自愈 | 进程挂了 / 端口不通 → 自动重启 |
 | 深度守卫 + IP 自动切换 | 每 15 分钟走代理实测 6 条链路；某域名不通 → 在候选 IP 池里自动切换并验证，失败则回滚 |
-| 自检脚本 | 一条命令体检 19 项：进程/端口/PAC/自启/链路/git/gh |
+| 自检脚本 | 一条命令体检 19 项：进程/端口/PAC/自启/链路/git/gh；另有 `gh-status.bat` 双击速查 |
 | 一键启停 / 登录 | `start-github-hosts.bat` / `stop-github-hosts.bat` / `gh-login.bat` |
 | **IP 自动发现（3.0）** | `update-ips.ps1` 调官方 Meta API（并用第三方 hosts 订阅作候选种子），本机 TCP 测速后写入 `dynamic-ips.json`；`guard.ps1` 自动采用，失败照旧回滚 |
+| **解包残留清扫（2026-09-26）** | PyInstaller onefile 的 mitmdump 每次启动都会在 `%TEMP%` 解包约 45 MB；`sweep-mei.ps1` 保留最近几个 `_MEI*` 目录并给日志封顶，看门狗重启前也会先清扫，避免残留无限累积 |
+| **重启节流与熔断（2026-09-26）** | 看门狗引入 `.restarting` 重启锁、冷却时间与突发熔断，避免与 `guard.ps1` 抢跑导致反复重启 |
+
+---
+
+## 2026-09-26 加固：解包残留与重启风暴
+
+PyInstaller 打包的 `mitmdump.exe` 是 onefile 形式，**每次启动都会把自己解包到 `%TEMP%\_MEIxxxxxx`**，
+进程异常退出时这些目录不会自动清理。曾有看门狗与 guard 互相抢跑反复重启，7.9 天累积
+**10078 个目录 / 442.8 GB**，吃满 C 盘。本次加固：
+
+- `sweep-mei.ps1`：只保留最近 `$KEEP` 个 `_MEI` 目录，其余清理（正在使用的因占用会跳过）；
+  同时给没有自带轮转的 `mitmdump.log` 等日志封顶。由计划任务 `GithubHostsMeiSweep` 每 2 分钟兜底，
+  `watchdog.ps1` / `guard.ps1` 在重启 mitmdump 前也会调用。
+- `watchdog.ps1`：尊重 `guard.ps1` 的 `.restarting` 锁；加入 `COOLDOWN` 冷却、`MAXBURST` 突发熔断，
+  并检测「脚本已更新但旧进程仍在跑」时自动重载。
+- `guard.ps1`：换 IP 重启期间持锁，并在重启前清扫残留。
+
+---
 
 ---
 
@@ -88,13 +106,18 @@ GitHub 会不定期调整 IP，本版本让工具**自己找候选**，减少手
 github-watchdog/
 ├─ install.ps1            安装：定位 mitmdump、装 CA、设 PAC、注册自启、启动自检
 ├─ uninstall.ps1          卸载：清自启、停代理、清 PAC 与环境变量
-├─ watchdog.ps1           看门狗：保活 + PAC 强制刷新
+├─ watchdog.ps1           看门狗：保活 + PAC 强制刷新 + 重启节流/熔断
 ├─ guard.ps1              深度守卫：链路实测 + IP 自动切换（含回滚）
+├─ update-ips.ps1         上游 IP 自动发现（官方 Meta API + 第三方种子）
+├─ sweep-mei.ps1          清理 PyInstaller _MEI 解包残留 + 日志封顶
 ├─ selfcheck.ps1          自检（19 项）
 ├─ mitmdump-run.cmd       稳定拉起 mitmdump（stdin=NUL，输出到日志）
-├─ watchdog-launcher.vbs  隐藏窗口拉起看门狗
+├─ *-launcher.vbs         隐藏窗口拉起各后台脚本（watchdog/guard/update-ips/sweep）
 ├─ start-github-hosts.bat / stop-github-hosts.bat
+├─ gh-status.bat          双击速查（进程/端口/PAC/环境变量/链路）
 ├─ gh-login.bat           GitHub CLI 设备码登录（可选）
+├─ docs/
+│  └─ git-credentials-and-ssh.md   git/gh 凭据与 SSH 的受限网络配置说明
 ├─ src/
 │  ├─ github-hosts.py     mitmproxy 插件（来自上游）
 │  └─ config.yaml         映射配置（本项目加固版）
@@ -152,7 +175,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File selfcheck.ps1
 
 :: GitHub CLI 登录（可选）
 gh-login.bat
+
+:: 双击速查（进程/端口/PAC/环境变量/链路）
+gh-status.bat
 ```
+
+> `git` / `gh` 在受限网络下的 **凭据与 SSH 配置**（含 `git` 走代理、信任 mitmproxy 的 CA、
+> `gh auth setup-git`、以及 SSH 的可行性边界）见
+> [`docs/git-credentials-and-ssh.md`](docs/git-credentials-and-ssh.md)。**该文档与本仓库均不含任何令牌或私钥。**
 
 改完 `src/config.yaml` 后重启代理即可生效：结束 `mitmdump` 进程，看门狗会在几秒内自动拉起。
 或直接运行 `guard.ps1` 做一次深度检查。
@@ -199,6 +229,12 @@ $p.GetProxy([Uri]'https://example.com/')  # 应为直连
 
 **Q：`curl` / `git` 走代理报 `schannel: server closed abruptly`？**
 用 openssl 后端的 git（`http.sslBackend=openssl`）并指定 CA bundle；或加 `--ssl-no-revoke`。
+
+**Q：`git clone/push` 用什么凭据？会不会把 token 写进仓库？**
+用 HTTPS + `gh` 凭据助手：token 只存在 `gh` 的凭据存储里，git 通过
+`gh auth git-credential` 取用，**配置与仓库里都不落盘任何令牌**。
+`git@github.com` 的 SSH 本机直连被墙，只有存在可用 SOCKS 代理时才能走通。
+详见 [`docs/git-credentials-and-ssh.md`](docs/git-credentials-and-ssh.md)。
 
 **Q：看门狗日志里的 `PAC nudged` 是什么？**
 强制浏览器重读 PAC 的动作，属于正常自愈行为。

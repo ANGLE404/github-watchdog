@@ -19,6 +19,8 @@ Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' 
 Remove-Item (Join-Path $SU 'github-hosts-watchdog.vbs') -Force -ErrorAction SilentlyContinue
 schtasks /Delete /TN GithubHostsWatchdogLogon /F 2>&1 | Out-Null
 schtasks /Delete /TN GithubHostsGuard /F 2>&1 | Out-Null
+schtasks /Delete /TN GithubHostsMeiSweep /F 2>&1 | Out-Null
+schtasks /Delete /TN GithubHostsUpdateIPs /F 2>&1 | Out-Null
 
 Write-Host '[*] clearing PAC + proxy env vars' -ForegroundColor Cyan
 Remove-ItemProperty -Path $REGKEY -Name 'AutoConfigURL' -ErrorAction SilentlyContinue
@@ -27,6 +29,7 @@ foreach ($v in @('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy')) {
     [Environment]::SetEnvironmentVariable($v, $null, 'User')
 }
 Remove-Item (Join-Path $BASE '.paused') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $BASE '.restarting') -Force -ErrorAction SilentlyContinue
 
 Write-Host ''
 Write-Host 'Done. The mitmproxy CA is still trusted (remove it manually if you want):' -ForegroundColor Gray
