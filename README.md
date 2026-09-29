@@ -118,6 +118,8 @@ github-watchdog/
 ├─ gh-login.bat           GitHub CLI 设备码登录（可选）
 ├─ docs/
 │  └─ git-credentials-and-ssh.md   git/gh 凭据与 SSH 的受限网络配置说明
+├─ skills/
+│  └─ github-access-setup/   可移植的 opencode skill：受限网络下让 git/gh/SSH 可用
 ├─ src/
 │  ├─ github-hosts.py     mitmproxy 插件（来自上游）
 │  └─ config.yaml         映射配置（本项目加固版）
@@ -181,8 +183,15 @@ gh-status.bat
 ```
 
 > `git` / `gh` 在受限网络下的 **凭据与 SSH 配置**（含 `git` 走代理、信任 mitmproxy 的 CA、
-> `gh auth setup-git`、以及 SSH 的可行性边界）见
+> `gh auth setup-git`、SSH 的可行性边界）见
 > [`docs/git-credentials-and-ssh.md`](docs/git-credentials-and-ssh.md)。**该文档与本仓库均不含任何令牌或私钥。**
+
+### 配套 opencode skill
+
+[`skills/github-access-setup/`](skills/github-access-setup/SKILL.md) 把上面这套流程封装成一个
+**可移植的 AI 技能**：自动诊断 git/gh/SSH 传输、配置代理与 CA、把 GitHub 的 SSH 地址自动
+重写为 HTTPS、并在发布前扫描脱敏。复制到 `~/.config/opencode/skills/` 并重启 opencode 即可生效
+（详见 [`skills/README.md`](skills/README.md)）。
 
 改完 `src/config.yaml` 后重启代理即可生效：结束 `mitmdump` 进程，看门狗会在几秒内自动拉起。
 或直接运行 `guard.ps1` 做一次深度检查。
