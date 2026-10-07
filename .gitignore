@@ -17,3 +17,8 @@ meta-cache.json
 # mitmproxy certificate material
 *.cer
 *.pem
+
+# mirror module runtime state
+mirror/mirrors-ranked.json
+mirror/auto.lock
+mirror/applied.json

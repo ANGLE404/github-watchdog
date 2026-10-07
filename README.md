@@ -30,6 +30,7 @@ mitmproxy 方案，补上了它在实际使用中最缺的三件事：**浏览�
 | **IP 自动发现（3.0）** | `update-ips.ps1` 调官方 Meta API（并用第三方 hosts 订阅作候选种子），本机 TCP 测速后写入 `dynamic-ips.json`；`guard.ps1` 自动采用，失败照旧回滚 |
 | **解包残留清扫（2026-09-26）** | PyInstaller onefile 的 mitmdump 每次启动都会在 `%TEMP%` 解包约 45 MB；`sweep-mei.ps1` 保留最近几个 `_MEI*` 目录并给日志封顶，看门狗重启前也会先清扫，避免残留无限累积 |
 | **重启节流与熔断（2026-09-26）** | 看门狗引入 `.restarting` 重启锁、冷却时间与突发熔断，避免与 `guard.ps1` 抢跑导致反复重启 |
+| **下载加速（git / 文件）** | `mirror/`：把 `git clone/fetch/pull` 与 CLI 下载改写到**当前最快的第三方镜像**，**每次使用自动测速切换**；`push` 仍直连 github.com。详见 [mirror/README.md](mirror/README.md) |
 
 ---
 
@@ -45,6 +46,25 @@ PyInstaller 打包的 `mitmdump.exe` 是 onefile 形式，**每次启动都会�
 - `watchdog.ps1`：尊重 `guard.ps1` 的 `.restarting` 锁；加入 `COOLDOWN` 冷却、`MAXBURST` 突发熔断，
   并检测「脚本已更新但旧进程仍在跑」时自动重载。
 - `guard.ps1`：换 IP 重启期间持锁，并在重启前清扫残留。
+
+---
+
+## 下载加速（git / 文件）
+
+主代理解决的是**浏览器**访问 github.com；而对 **`git clone`、`npx`、Release/Archive 下载**
+这类“命令行大流量”，本仓库额外带了一个独立模块 `mirror/`：
+
+- 内置 118 个社区镜像前缀，**并行测速**取当前最快的；
+- 写进 git 全局配置后，`clone/fetch/pull` 自动走镜像，**`push` 仍走官方 github.com**；
+- `bin\git.cmd` 垫片让**每次 git 下载都在后台复测一次**，发现更快的镜像自动切换；
+- 对镜像域名禁用凭据弹窗、绕开本地代理直连，实测可达数 MB/s。
+
+```powershell
+cd mirror
+powershell -NoProfile -ExecutionPolicy Bypass -File install-mirror.ps1
+```
+
+一键还原：`mirror\uninstall-mirror.ps1`。只适用**公开仓库**（私库请先关闭，见模块文档）。
 
 ---
 
@@ -123,7 +143,8 @@ github-watchdog/
 ├─ src/
 │  ├─ github-hosts.py     mitmproxy 插件（来自上游）
 │  └─ config.yaml         映射配置（本项目加固版）
-└─ bin/                   放置 mitmdump.exe（不随仓库提交）
+├─ bin/                   放置 mitmdump.exe（不随仓库提交）
+└─ mirror/                下载加速模块（git / 文件 → 最快第三方镜像），见其 README
 ```
 
 ---
@@ -256,7 +277,8 @@ $p.GetProxy([Uri]'https://example.com/')  # 应为直连
 
 ## 已知限制
 
-- 大文件（codeload 打包、Release 附件）速度受链路影响，可能较慢。
+- 大文件（codeload 打包、Release 附件）经浏览器 PAC 代理时速度受链路影响，可能较慢；
+  命令行侧的 `git clone` / Release 下载建议走 `mirror/` 模块（第三方镜像，实测数 MB/s）。
 - 上游 IP 会不定期变得不可达；`guard.ps1` 能自动切换候选 IP，但候选池也需要偶尔维护。
 - 仅面向 Windows。
 
@@ -273,6 +295,7 @@ $p.GetProxy([Uri]'https://example.com/')  # 应为直连
 
 - [feng2208/github-hosts](https://github.com/feng2208/github-hosts) —— mitmproxy 代理方案与插件
 - [mitmproxy](https://mitmproxy.org) —— 代理内核
+- 社区 GitHub 镜像聚合站（moretools / github.akams.cn / gitwarp 等）—— `mirror/` 的候选镜像前缀来源
 
 ## License
 
