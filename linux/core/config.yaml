@@ -10,6 +10,9 @@ mappings:
 - hosts: [codeload.github.com]
   sni: "_codeload.github.com"
   address: 20.205.243.165:443
+- hosts: [uploads.github.com]
+  sni: "_github.com"
+  address: 20.205.243.161:443
 - hosts: [github.githubassets.com]
   sni: "_github.githubassets.com"
   address: 185.199.111.154:443

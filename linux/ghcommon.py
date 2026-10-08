@@ -9,6 +9,7 @@ META_CACHE = BASE + "/meta-cache.json"
 CA = "/root/.mitmproxy/mitmproxy-ca-cert.pem"
 PROXY = "http://127.0.0.1:8180"
 ASSETS_IP = "185.199.111.154"
+UPLOADS_IP = "20.205.243.161"
 LOCK = BASE + "/.healing"
 
 # self-heal coordination: during a heal window the service is restarted several
@@ -94,6 +95,9 @@ mappings:
 - hosts: [codeload.github.com]
   sni: "_codeload.github.com"
   address: {codeload}:443
+- hosts: [uploads.github.com]
+  sni: "_github.com"
+  address: {UPLOADS_IP}:443
 - hosts: [github.githubassets.com]
   sni: "_github.githubassets.com"
   address: {ASSETS_IP}:443

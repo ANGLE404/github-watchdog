@@ -32,6 +32,7 @@ linux/
   systemd/                      # 9 个 unit（service + timer）
   profile.d/                    # 两个 profile 片段
   mirror/                       # git 加速模块（见 mirror/README）
+  tools/gh-release-upload.py    # Release 附件上传绕过（见下）
 ```
 
 ## 安装
@@ -58,6 +59,31 @@ gh-start / gh-stop             # 启停
 - **自愈**：`update_ips.py` 用官方 `api.github.com/meta` + GitHub520 seeds + `doh.pub` 兜底生成候选池（TCP:443 测速排序，写 `dynamic-ips.json`），逐个经代理验证后写 `config.yaml` 并重启；`guard.py` 每 15min 复检并换 IP，**任何候选失败都回滚**。
 - **大流量**：代理只擅长小请求（实测 ~10 KB/s），clone/fetch 走镜像（实测 ~1.7 MB/s）。
 - **私有库安全**：默认**只改写 `https://`**，`git@github.com:` / `ssh://` 形式不动 → 私有库保持 SSH 直连，绝不经第三方镜像（避免 token 泄露）。HTTPS 私有库会被镜像，**不要这样用**。
+
+## Release 附件上传（`uploads.github.com` 特殊处理）
+
+`gh release upload` / REST 的附件上传走 **`uploads.github.com`**，它有两个坑：
+
+1. 不在 `*.github.com` 通配 IP 上 —— 用通配 IP（`140.82.116.3`）会返回 **404**；真实前端在 Azure 段 `20.205.243.161`。
+2. 该 IP **发 TLS SNI 会被重置**，必须省略 SNI。
+
+`config.yaml` 已加入显式映射：
+
+```yaml
+- hosts: [uploads.github.com]
+  sni: "_github.com"          # 省略 SNI
+  address: 20.205.243.161:443
+```
+
+即便如此，`gh release upload` 经 mitmproxy 仍可能 `unexpected EOF`（代理层二次 TLS 处理所致）。**可靠兜底**是 `tools/gh-release-upload.py`：绕开代理，直接向 Azure 前端建 **无 SNI** 的原始 TLS 连接并 POST：
+
+```bash
+# 解析 release id 用 gh（需代理环境），上传本体直连
+HTTPS_PROXY=http://127.0.0.1:8180 \
+  python3 /opt/github-hosts/tools/gh-release-upload.py OWNER/REPO TAG FILE [FILE ...]
+```
+
+失败会自动在 `.161/.162/.165/.167` 间轮换。token 取自 `$GH_TOKEN` 或 `gh auth token`。
 
 ## 安全 / 边界
 
