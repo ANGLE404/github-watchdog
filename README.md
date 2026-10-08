@@ -231,7 +231,7 @@ gh-status.bat
 | *.github.com | `_github.com` | 140.82.116.3:443 | 子域兜底（alive / collector 等） |
 | api.github.com | `_api.github.com` | 140.82.112.6:443 | REST API |
 | codeload.github.com | `_codeload.github.com` | 140.82.112.9:443 | 仓库打包 |
-| uploads.github.com | `_github.com`（省略 SNI） | 20.205.243.161:443 | Release 附件上传（不在通配 IP 上，见下） |
+| uploads.github.com | `_githubusercontent.com`（省略 SNI） | 20.205.243.161:443 | Release 附件上传（不在通配 IP 上，见下） |
 | gist.github.com | `_github.com` | 140.82.112.4:443 | Gist |
 | github.githubassets.com | `_github.githubassets.com` | 185.199.111.154:443 | 页面静态资源 |
 | *.githubusercontent.com | `github.githubassets.com`（SNI 对齐） | 185.199.111.154:443 | raw / 头像 / Release 附件 |
@@ -239,7 +239,7 @@ gh-status.bat
 
 未映射的域名默认 TCP 直通（不影响其它网站）。
 
-> **Release 附件上传**：`uploads.github.com` 走 Azure `20.205.243.161` 且必须省略 SNI（发 SNI 会被重置、用 `*.github.com` 通配 IP 会 404）。经 mitmproxy 时 `gh release upload` 仍可能 `unexpected EOF`，可用 `linux/tools/gh-release-upload.py` 以无 SNI 原始连接直传作兜底。
+> **Release 附件上传**：`uploads.github.com` 走 Azure `20.205.243.161` 且必须省略 SNI（发 SNI 会被重置、用 `*.github.com` 通配 IP 会 404）。省略 SNI 时该 IP 默认证书为 `CN=*.githubusercontent.com`（SAN 含 `*.githubusercontent.com`、`githubusercontent.com`），故校验名必须写 `sni: _githubusercontent.com`（写成 `_github.com` 会因 hostname mismatch 导致经 mitmproxy 的连接失败）。若代理层仍 `unexpected EOF`，可用 `linux/tools/gh-release-upload.py` 以无 SNI 原始连接直传作兜底。
 
 `guard.ps1` 里为每条映射维护了**候选 IP 池**，某条不通时会自动换下一个可用 IP。
 

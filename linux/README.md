@@ -66,12 +66,13 @@ gh-start / gh-stop             # 启停
 
 1. 不在 `*.github.com` 通配 IP 上 —— 用通配 IP（`140.82.116.3`）会返回 **404**；真实前端在 Azure 段 `20.205.243.161`。
 2. 该 IP **发 TLS SNI 会被重置**，必须省略 SNI。
+3. 省略 SNI 时该 IP 的默认证书是 `CN=*.githubusercontent.com`（SAN 含 `*.githubusercontent.com`、`githubusercontent.com`），因此 mitmproxy 的校验名要写 `_githubusercontent.com`；写成 `_github.com` 会因 hostname mismatch 使连接失败。
 
 `config.yaml` 已加入显式映射：
 
 ```yaml
 - hosts: [uploads.github.com]
-  sni: "_github.com"          # 省略 SNI
+  sni: "_githubusercontent.com"   # 省略 SNI，校验名用 *.githubusercontent.com 的基名
   address: 20.205.243.161:443
 ```
 

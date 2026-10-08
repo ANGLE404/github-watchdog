@@ -96,7 +96,7 @@ mappings:
   sni: "_codeload.github.com"
   address: {codeload}:443
 - hosts: [uploads.github.com]
-  sni: "_github.com"
+  sni: "_githubusercontent.com"
   address: {UPLOADS_IP}:443
 - hosts: [github.githubassets.com]
   sni: "_github.githubassets.com"
