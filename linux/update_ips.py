@@ -7,7 +7,7 @@ import sys, os, json, time, subprocess, ipaddress
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ghcommon import (BASE, CONFIG, POOLS, META_CACHE, PROXY, CA,
                       SERVICES, STATIC, write_cfg, load_cfg_ips, restart,
-                      proxy_ok, tcp_ms, now)
+                      proxy_ok, tcp_ms, now, acquire_lock, release_lock)
 
 THIRDPARTY = [
     "https://raw.hellogithub.com/hosts",
@@ -134,6 +134,16 @@ def doh_resolve(name):
 
 
 def main():
+    if not acquire_lock():
+        log("another heal is in progress -> skip")
+        return 0
+    try:
+        return _run()
+    finally:
+        release_lock()
+
+
+def _run():
     meta = get_meta()
     if not meta:
         log("no meta and no cache -> abort")

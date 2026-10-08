@@ -5,7 +5,7 @@
 import sys, os, json, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ghcommon import (BASE, load_cfg_ips, write_cfg, restart, proxy_ok,
-                      load_pools, now)
+                      load_pools, now, acquire_lock, release_lock)
 
 LOG = BASE + "/guard.log"
 
@@ -33,6 +33,16 @@ def log(msg):
 
 
 def main():
+    if not acquire_lock():
+        log("another heal is in progress -> skip")
+        return 0
+    try:
+        return _run()
+    finally:
+        release_lock()
+
+
+def _run():
     url_of = dict(LINKS)
     bad = [n for n, u in LINKS if not proxy_ok(u)]
     ok = [n for n, _ in LINKS if n not in bad]

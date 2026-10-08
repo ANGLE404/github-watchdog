@@ -1,5 +1,5 @@
 #!/bin/bash
-# github-watchdog (linux) :: selfcheck  (extended: ~19 checks + self-heal)
+# github-watchdog (linux) :: selfcheck  (19 checks + self-heal, oscillation-safe)
 CA=/root/.mitmproxy/mitmproxy-ca-cert.pem
 PROXY="http://127.0.0.1:8180"
 BASE=/opt/github-hosts
@@ -9,7 +9,23 @@ bad() { FAIL=$((FAIL+1)); FAILED="$FAILED $2"; printf "  [FAIL] %s\n" "$1"; }
 http() { curl -x "$PROXY" --cacert "$CA" -s -o /dev/null --max-time 25 -w '%{http_code}' "$1"; }
 chk_http() { local c; c=$(http "$2"); [ "$c" = "200" ] && ok "$1 ($c)" || bad "$1 (code=$c)" "$3"; }
 
+# --- transient guard: never mistake a heal/restart for a real outage ---
+healing() { [ -f "$BASE/.healing" ] && [ $(( $(date +%s) - $(stat -c %Y "$BASE/.healing") )) -lt 300 ]; }
+svc_grace() {
+  local ts now
+  ts=$(systemctl show github-hosts.service -p ActiveEnterTimestampMonotonic --value 2>/dev/null)
+  now=$(awk '{print int($1*1000000)}' /proc/uptime)
+  [ -n "$ts" ] && [ "${ts:-0}" -gt 0 ] 2>/dev/null && [ $(( (now-ts)/1000000 )) -lt 120 ]
+}
+
 echo "==== github-hosts selfcheck  $(date '+%F %T') ===="
+
+# wait briefly for the service so we don't catch a restart mid-flight
+for _ in 1 2 3; do
+  systemctl --quiet is-active github-hosts.service && ss -ltn 2>/dev/null | grep -q ':8180' && break
+  sleep 3
+done
+
 echo "-- connectivity (via proxy) --"
 chk_http "github.com"          "https://github.com/robots.txt"                                     github
 chk_http "api.github.com"      "https://api.github.com/rate_limit"                                api
@@ -42,6 +58,10 @@ ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -T 
 
 echo "---- summary: PASS=$PASS FAIL=$FAIL ----"
 if [ "$FAIL" -gt 0 ]; then
+  if healing || svc_grace; then
+    echo "$(date '+%F %T') transient (heal/restart in progress) -> skip heal: $FAILED"
+    exit 0
+  fi
   echo "$(date '+%F %T') 健康检查失败:$FAILED -> 重刷IP并重启"
   /usr/bin/python3 $BASE/update_ips.py
   systemctl restart github-hosts.service

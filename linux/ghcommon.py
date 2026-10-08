@@ -9,6 +9,43 @@ META_CACHE = BASE + "/meta-cache.json"
 CA = "/root/.mitmproxy/mitmproxy-ca-cert.pem"
 PROXY = "http://127.0.0.1:8180"
 ASSETS_IP = "185.199.111.154"
+LOCK = BASE + "/.healing"
+
+# self-heal coordination: during a heal window the service is restarted several
+# times; the 5-min health check must not mistake that churn for a real outage
+# (that caused an oscillation storm). Guard/update hold this lock while healing.
+STALE_LOCK = 300
+
+
+def acquire_lock():
+    try:
+        if os.path.exists(LOCK):
+            import time as _t
+            if _t.time() - os.path.getmtime(LOCK) > STALE_LOCK:
+                os.remove(LOCK)
+            else:
+                return False
+        with open(LOCK, "w") as f:
+            f.write(str(int(__import__("time").time())))
+        return True
+    except OSError:
+        return True
+
+
+def release_lock():
+    try:
+        os.remove(LOCK)
+    except OSError:
+        pass
+
+
+def healing_active():
+    if not os.path.exists(LOCK):
+        return False
+    import time as _t
+    if _t.time() - os.path.getmtime(LOCK) > STALE_LOCK:
+        return False
+    return True
 
 # service: name -> (proxy test url)
 SERVICES = [
@@ -74,16 +111,20 @@ def restart():
     time.sleep(3.5)
 
 
-def proxy_ok(url, timeout=20):
-    try:
-        r = subprocess.run(
-            ["curl", "-x", PROXY, "--cacert", CA, "-s", "-o", "/dev/null",
-             "--max-time", str(timeout), "-w", "%{http_code}", url],
-            capture_output=True, text=True, timeout=timeout + 5)
-        code = r.stdout.strip()
-        return code in ("200", "301", "302")
-    except Exception:
-        return False
+def proxy_ok(url, timeout=20, retries=2):
+    for i in range(retries):
+        try:
+            r = subprocess.run(
+                ["curl", "-x", PROXY, "--cacert", CA, "-s", "-o", "/dev/null",
+                 "--max-time", str(timeout), "-w", "%{http_code}", url],
+                capture_output=True, text=True, timeout=timeout + 5)
+            if r.stdout.strip() in ("200", "301", "302"):
+                return True
+        except Exception:
+            pass
+        if i < retries - 1:
+            time.sleep(2)
+    return False
 
 
 def tcp_ms(ip, port=443, timeout=1.2):
