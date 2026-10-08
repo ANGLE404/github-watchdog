@@ -1,0 +1,8 @@
+[Unit]
+Description=github-watchdog mirror: refresh fastest git mirror
+After=network-online.target github-hosts.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/github-hosts/mirror/gh-apply.sh --refresh

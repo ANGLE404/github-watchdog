@@ -1,0 +1,7 @@
+[Unit]
+Description=github-hosts deep guard every 15min
+[Timer]
+OnBootSec=150s
+OnUnitActiveSec=15min
+[Install]
+WantedBy=timers.target

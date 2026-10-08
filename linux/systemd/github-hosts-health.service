@@ -1,0 +1,5 @@
+[Unit]
+Description=github-hosts health check
+[Service]
+Type=oneshot
+ExecStart=/opt/github-hosts/selfcheck.sh

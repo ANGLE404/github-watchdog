@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh github-hosts edge IPs (Meta API + seeds + doh.pub, verify+rollback)
+After=network-online.target github-hosts.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/github-hosts/update_ips.py

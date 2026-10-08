@@ -1,0 +1,14 @@
+[Unit]
+Description=github-hosts (mitmproxy domain-fronting GitHub accelerator)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=/root
+ExecStart=/opt/github-hosts/venv/bin/mitmdump -s /opt/github-hosts/src/github-hosts.py -p 8180 --set flow_detail=0
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

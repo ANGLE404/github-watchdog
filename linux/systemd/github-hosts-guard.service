@@ -1,0 +1,8 @@
+[Unit]
+Description=github-hosts deep guard (per-link verify + IP switch + rollback)
+After=network-online.target github-hosts.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/github-hosts/guard.py

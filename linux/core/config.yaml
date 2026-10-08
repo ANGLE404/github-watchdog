@@ -1,0 +1,18 @@
+---
+# seed config - 运行时由 update_ips.py / guard.py 按实测 IP 重写
+mappings:
+- hosts: [github.com]
+  sni: "_github.com"
+  address: 20.205.243.166:443
+- hosts: [api.github.com]
+  sni: "_api.github.com"
+  address: 140.82.116.6:443
+- hosts: [codeload.github.com]
+  sni: "_codeload.github.com"
+  address: 20.205.243.165:443
+- hosts: [github.githubassets.com]
+  sni: "_github.githubassets.com"
+  address: 185.199.111.154:443
+- hosts: ["*.githubusercontent.com"]
+  sni: www.yelp.com
+  address: www.yelp.com:443

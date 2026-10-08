@@ -1,0 +1,50 @@
+#!/bin/bash
+# =============================================================================
+#  github-watchdog (linux) :: ghdl
+#  Download a GitHub Release / archive URL through the fastest mirror prefix.
+#  For non-git large files (Release assets, archive zip/tar).
+#
+#  Usage:
+#    ghdl <github-url> [-o OUT]      # download via fastest mirror
+#    ghdl <github-url> --mirror M   # force a specific mirror prefix
+#    ghdl --sha256 <github-url>      # print official sha256 (direct, best effort)
+# =============================================================================
+set -u
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+CACHE="$HERE/mirrors-ranked.json"
+
+if [ "${1:-}" = "--sha256" ]; then
+  URL="${2:?usage: ghdl --sha256 <github-url>}"
+  echo "NOTE: official checksums are per-repo (see the repo's release page / SHA256SUMS)." >&2
+  echo "Fetching SHA256SUMS via mirror if present is not automatic; verify manually." >&2
+  exit 0
+fi
+
+URL="${1:?usage: ghdl <github-url> [-o OUT] [--mirror M]}"; shift || true
+OUT=""; MIRROR=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) OUT="${2:?}"; shift 2;;
+    --mirror) MIRROR="${2:?}"; shift 2;;
+    *) echo "unknown arg: $1" >&2; exit 2;;
+  esac
+done
+
+if [ -z "$MIRROR" ]; then
+  MIRROR=$(python3 -c 'import json,sys
+try:
+    d=json.load(open(sys.argv[1])); r=d.get("ranked") or []
+    print(r[0] if r else "")
+except Exception: print("")' "$CACHE" 2>/dev/null)
+fi
+if [ -z "$MIRROR" ]; then
+  echo "No ranked mirror yet; run: bash $HERE/gh-apply.sh --refresh" >&2
+  exit 1
+fi
+
+[ -n "$OUT" ] || OUT="$(basename "${URL%%\?*}")"
+TARGET="${MIRROR}${URL}"
+echo "Mirror : $MIRROR"
+echo "URL    : $URL"
+echo "Output : $OUT"
+curl --noproxy '*' -L --fail --progress-bar -o "$OUT" "$TARGET" && { echo "Done."; sha256sum "$OUT"; }

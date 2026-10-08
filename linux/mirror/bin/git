@@ -1,0 +1,17 @@
+#!/bin/bash
+# =============================================================================
+#  github-watchdog (linux) :: git shim
+#  On clone/fetch/pull/submodule it fires a debounced, backgrounded re-pick of
+#  the fastest GitHub mirror, then execs the real git immediately (non-blocking).
+#  Installed as /usr/local/bin/git (symlink) + prepended to PATH via profile.d.
+# =============================================================================
+MIRROR_DIR="/opt/github-hosts/mirror"
+REALGIT="/usr/bin/git"
+[ -x "$REALGIT" ] || REALGIT="$(command -v git 2>/dev/null)"
+case "$1" in
+  clone|fetch|pull|submodule)
+    nohup bash "$MIRROR_DIR/gh-apply.sh" --auto >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    ;;
+esac
+exec "$REALGIT" "$@"

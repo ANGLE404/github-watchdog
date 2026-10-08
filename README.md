@@ -12,6 +12,10 @@ mitmproxy 方案，补上了它在实际使用中最缺的三件事：**浏览�
 > - 分支 [`v2.0A`](../../tree/v2.0A) = **纯连通性监测**：不改代理、不写死 IP、不动 SNI，
 >   只如实报告 GitHub 通 / 不通。
 
+> **Linux 版**：仓库根目录为 Windows 版（`.ps1`/`.bat`/`.vbs` + PowerShell 版 `mirror/`）；
+> **Linux 移植版全部在 [`linux/`](linux/) 目录**（systemd + Python + bash，含 git 镜像模块），
+> 与 Windows 版功能对齐、并行维护。见 [linux/README.md](linux/README.md)。
+
 ---
 
 ## 特性
