@@ -158,6 +158,12 @@ function Set-ProxyOn {
         foreach ($v in @('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy')) {
             [Environment]::SetEnvironmentVariable($v, 'http://127.0.0.1:8180', 'User')
         }
+        # 8180 是只服务 GitHub 的本地 mitmproxy：只让 github 走它，其余全部直连。
+        # curl/git 只有 "不走代理" 白名单（没有 "只走代理"），故此处把非 GitHub 域
+        # 与内网段列入 NO_PROXY，使 env 代理实际等价于 "仅 GitHub 走代理"。
+        $noProxy = 'localhost,127.0.0.1,::1,*.local,openai.com,*.openai.com,opencode.ai,*.opencode.ai,*.deepseek.com,api.deepseek.com,wawapii.com,*.anthropic.com,*.claude.com,*.baidu.com,*.google.com,*.cloudflare.net,*.cloudflare.com,172.19.104.15,172.19.*,172.16.0.0/12,10.*,192.168.*,100.64.0.0/10,100.100.100.100,*.tailscale.com,*.tailscale.io,controlplane.tailscale.com'
+        [Environment]::SetEnvironmentVariable('NO_PROXY', $noProxy, 'User')
+        [Environment]::SetEnvironmentVariable('no_proxy', $noProxy, 'User')
     } catch { }
 }
 
